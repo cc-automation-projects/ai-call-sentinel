@@ -1,3 +1,209 @@
+### Этап 6. Тестирование
+
+
+#### Шаг 6.1. Модульное тестирование
+
+**Файл `test_audio_processor.py`:**
+
+```python
+import unittest
+import numpy as np
+from core.audio_processor import AudioProcessor
+
+class TestAudioProcessor(unittest.TestCase):
+    def setUp(self):
+        self.processor = AudioProcessor()
+
+    def test_load_audio(self):
+        """Тест загрузки аудиофайла"""
+        # Создаём тестовый аудиосигнал
+        test_signal = np.random.rand(16000)  # 1 сек при 16 кГц
+        sample_rate = 16000
+
+        # Тестируем обработку
+        processed = self.processor.process_audio(test_signal, sample_rate)
+        self.assertIsInstance(processed, np.ndarray)
+        self.assertEqual(processed.shape[0], 16000)
+
+    def test_noise_reduction(self):
+        """Тест шумоподавления"""
+        noisy_signal = np.random.rand(8000) + 0.5 * np.sin(2 * np.pi * 50 * np.arange(8000) / 8000
+        clean_signal = self.processor._apply_noise_reduction(noisy_signal, 8000)
+        self.assertLess(np.std(clean_signal), np.std(noisy_signal))
+
+    def test_feature_extraction(self):
+        """Тест извлечения признаков"""
+        signal = np.random.rand(4000)
+        features = self.processor.extract_features(signal, 8000)
+        self.assertIn('mfcc', features)
+        self.assertIn('spectral_centroid', features)
+        self.assertEqual(len(features['mfcc']), 13)  # стандартные 13 MFCC коэффициентов
+```
+
+**Файл `test_emotion_detector.py`:**
+
+```python
+import unittest
+from core.emotion_detector import EmotionDetector
+import numpy as np
+
+class TestEmotionDetector(unittest.TestCase):
+    def setUp(self):
+        self.detector = EmotionDetector()
+
+    def test_detect_emotions(self):
+        """Тест детекции эмоций"""
+        # Симулируем признаки из аудио
+        test_features = {
+            'mfcc': np.random.rand(13),
+            'spectral_centroid': 0.7,
+            'zero_crossing_rate': 0.1
+        }
+        emotions = self.detector.detect_emotions(test_features)
+        self.assertIsInstance(emotions, dict)
+        self.assertGreaterEqual(sum(emotions.values()), 0.9)  # сумма вероятностей ~1
+        self.assertIn('anger', emotions)
+```
+
+**Файл `test_rule_engine.py`:**
+
+```python
+import unittest
+from core.rule_engine import RuleEngine
+
+class TestRuleEngine(unittest.TestCase):
+    def setUp(self):
+        self.engine = RuleEngine()
+
+    def test_classify_situation_type(self):
+        """Тест классификации ситуаций"""
+        keywords = ['конфликт', 'недоволен', 'жалоба']
+        emotions = {'anger': 0.8, 'frustration': 0.6}
+        events = [{'type': 'ACUSTIC_SUDDEN_SILENCE', 'timestamp': 120}]
+
+        situation_type = self.engine.classify_situation_type(keywords, emotions, events)
+        self.assertIn(situation_type, ['conflict', 'complaint'])
+
+    def test_priority_assignment(self):
+        """Тест назначения приоритета"""
+        analysis_results = {
+            'negativity_score': 0.9,
+            'situation_type': 'threat',
+            'emotions': {'anger': 0.9}
+        }
+        priority = self.engine.determine_priority(analysis_results)
+        self.assertEqual(priority, 'critical')
+```
+
+**Файл `test_notification_connectors.py`:**
+
+```python
+import unittest
+from notification_connectors import TelegramConnector, SlackConnector, EmailConnector
+from unittest.mock import patch, MagicMock
+
+class TestNotificationConnectors(unittest.TestCase):
+    @patch('requests.post')
+    def test_telegram_send(self, mock_post):
+        """Тест отправки в Telegram"""
+        mock_post.return_value.status_code = 200
+        connector = TelegramConnector('test_token', 'test_chat')
+        result = connector.send_message('Test message')
+        self.assertTrue(result)
+        mock_post.assert_called_once()
+
+    @patch('smtplib.SMTP')
+    def test_email_send(self, mock_smtp):
+        """Тест отправки email"""
+        mock_instance = mock_smtp.return_value
+        mock_instance.sendmail.return_value = {}
+        connector = EmailConnector('smtp.test.com', 587, 'user', 'pass', 'from@test.com')
+        result = connector.send_email(['to@test.com'], 'Test', 'Body')
+        self.assertTrue(result)
+```
+
+#### Шаг 6.2. Интеграционное тестирование
+
+**Файл `test_integration.py`:**
+
+```python
+import unittest
+import threading
+import time
+from core.core_analyzer import CoreAnalyzer
+from dashboard_integration import DashboardIntegration
+
+class TestIntegration(unittest.TestCase):
+    def setUp(self):
+        self.analyzer = CoreAnalyzer()
+        self.dashboard = DashboardIntegration(self.analyzer)
+
+    def test_end_to_end_scenario(self):
+        """Сквозной сценарий: аудио → анализ → оповещение"""
+        # Подготавливаем тестовый аудиофайл
+        test_audio_path = 'tests/data/test_call_1.wav'
+        call_data = {
+            'call_id': 'TEST_001',
+            'operator_id': 'OP_001',
+            'audio_path': test_audio_path
+        }
+
+        # Запускаем анализ
+        results = self.analyzer.analyze_call(call_data)
+
+        # Проверяем результаты
+        self.assertIn('negativity_score', results)
+        self.assertIn('priority_level', results)
+        self.assertGreater(results['negativity_score'], 0)
+
+        # Проверяем отправку оповещений
+        alert_results = self.dashboard.alert_manager.send_alert(results)
+        self.assertTrue(any(alert_results.values()))  # хотя бы один канал сработал
+
+
+    def test_load_testing(self):
+        """Нагрузочное тестирование (50+ одновременных потоков)"""
+        num_threads = 50
+        threads = []
+
+        def analyze_call_wrapper():
+            test_audio_path = 'tests/data/test_call_1.wav'
+            call_data = {'call_id': f'LOAD_{threading.current_thread().ident}',
+                        'operator_id': 'OP_LOAD', 'audio_path': test_audio_path}
+            self.analyzer.analyze_call(call_data)
+
+        # Запускаем потоки
+        for _ in range(num_threads):
+            thread = threading.Thread(target=analyze_call_wrapper)
+            threads.append(thread)
+            thread.start()
+
+        # Ждём завершения
+        for thread in threads:
+            thread.join(timeout=30)  # таймаут 30 секунд
+
+        # Проверяем, что все потоки завершились
+        self.assertFalse(any(t.is_alive() for t in threads))
+
+    def test_failover_recovery(self):
+        """Тестирование отказоустойчивости"""
+        # Имитируем обрыв соединения
+        with patch.object(TelegramConnector, 'send_message', side_effect=Exception('Network error')):
+            results = self.analyzer.analyze_call({
+                'call_id': 'FAIL_001',
+                'operator_id': 'OP_FAIL',
+                'audio_path': 'tests/data/test_call_1.wav'
+            })
+            # Система должна продолжить работу и отправить через другие каналы
+            alert_results = self.dashboard.alert_manager.send_alert(results)
+            # Проверяем, что другие каналы сработали
+            self.assertTrue(
+                any(v for k, v in alert_results.items() if k != 'telegram')
+            )
+```
+
+#### Шаг 6.3. Проверка точности
+
 ```python
 """Файл `test_accuracy.py`"""
 
