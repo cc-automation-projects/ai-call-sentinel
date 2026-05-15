@@ -471,7 +471,6 @@ docker-compose down
   "severity": "all"
 }
 ```
-```
 
 ---
 
